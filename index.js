@@ -1,7 +1,8 @@
 require("dotenv").config(); // 本機開發用；Render 上請在 Dashboard → Environment 設定變數
 
 const express = require("express");
-const line = require("@line/bot-sdk");
+const crypto  = require("crypto");
+const line    = require("@line/bot-sdk");
 
 // ── 環境變數讀取（.trim() 防止複製貼上時帶入空白） ──────────────────────────
 const CHANNEL_ACCESS_TOKEN = (process.env.CHANNEL_ACCESS_TOKEN || "").trim();
@@ -16,11 +17,6 @@ if (!CHANNEL_ACCESS_TOKEN || !CHANNEL_SECRET) {
   process.exit(1);
 }
 
-const config = {
-  channelAccessToken: CHANNEL_ACCESS_TOKEN,
-  channelSecret:      CHANNEL_SECRET,
-};
-
 // ── LINE client 初始化 ────────────────────────────────────────────────────────
 const client = new line.messagingApi.MessagingApiClient({
   channelAccessToken: CHANNEL_ACCESS_TOKEN,
@@ -28,8 +24,6 @@ const client = new line.messagingApi.MessagingApiClient({
 
 // ── Express app ───────────────────────────────────────────────────────────────
 const app = express();
-
-// !! 不可在 /webhook 前使用 express.json()，會破壞簽名驗證 !!
 
 // ── 資料儲存（in-memory） ─────────────────────────────────────────────────────
 // key: groupId_userId → YYYY-MM-DD（判斷今天是否已簽到）
@@ -39,35 +33,57 @@ const checkinCount = {};
 // key: groupId_userId → { lastDate, streak }
 const streakData = {};
 
+// ── 手動簽名驗證 middleware（完全繞過 line.middleware，相容所有 SDK 版本）──────
+function verifyLineSignature(req, res, next) {
+  const signature = req.headers["x-line-signature"];
+  if (!signature) {
+    console.error("[簽名] 缺少 x-line-signature header");
+    return res.status(400).send("Missing signature");
+  }
+
+  const hmac = crypto
+    .createHmac("sha256", CHANNEL_SECRET)
+    .update(req.rawBody)
+    .digest("base64");
+
+  if (hmac !== signature) {
+    console.error("[簽名] 驗證失敗 — 計算值:", hmac, "收到:", signature);
+    return res.status(400).send("Invalid signature");
+  }
+
+  next();
+}
+
 // ── Health check（Render 需要這個端點） ──────────────────────────────────────
 app.get("/", (req, res) => res.send("LINE Bot is running."));
 
-// ── Webhook 路由 ──────────────────────────────────────────────────────────────
-app.post("/webhook", line.middleware(config), async (req, res) => {
-  console.log(`[webhook] 收到 ${req.body.events.length} 個事件`);
-  try {
-    const events = req.body.events;
-    await Promise.all(events.map(handleEvent));
-    res.json({ status: "ok" });
-  } catch (err) {
-    console.error("[handleEvent error]", err);
-    res.status(500).end();
+// ── Webhook 路由（用 express.raw 保留原始 body，再手動驗簽） ─────────────────
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    // 把 rawBody 存起來給 verifyLineSignature 用，再 parse 成 JSON
+    req.rawBody = req.body;
+    try {
+      req.body = JSON.parse(req.rawBody.toString("utf8"));
+    } catch (e) {
+      console.error("[webhook] JSON 解析失敗", e);
+      return res.status(400).send("Invalid JSON");
+    }
+    next();
+  },
+  verifyLineSignature,
+  async (req, res) => {
+    console.log(`[webhook] 收到 ${req.body.events.length} 個事件`);
+    try {
+      await Promise.all(req.body.events.map(handleEvent));
+      res.json({ status: "ok" });
+    } catch (err) {
+      console.error("[handleEvent error]", err);
+      res.status(500).end();
+    }
   }
-});
-
-// ── LINE middleware 錯誤處理器（4 個參數才會被當作 error handler）────────────
-app.use((err, req, res, next) => {
-  if (err.name === "SignatureValidationFailed") {
-    console.error("[簽名驗證失敗] 請確認 CHANNEL_SECRET 是否正確", err.message);
-    return res.status(400).send("Invalid signature");
-  }
-  if (err.name === "JSONParseError") {
-    console.error("[JSON 解析錯誤]", err.message);
-    return res.status(400).send("Invalid JSON");
-  }
-  console.error("[未知錯誤]", err);
-  res.status(500).end();
-});
+);
 
 // ── 事件處理 ──────────────────────────────────────────────────────────────────
 async function handleEvent(event) {
