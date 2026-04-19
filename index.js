@@ -31,8 +31,12 @@ const checkinCount = {};
 // key: groupId_userId → { lastDate, streak }
 const streakData = {};
 
+// ── Health check（Render 需要這個端點） ──────────────────────────────────────
+app.get("/", (req, res) => res.send("LINE Bot is running."));
+
 // ── Webhook 路由 ──────────────────────────────────────────────────────────────
 app.post("/webhook", line.middleware(config), async (req, res) => {
+  console.log(`[webhook] 收到 ${req.body.events.length} 個事件`);
   try {
     const events = req.body.events;
     await Promise.all(events.map(handleEvent));
@@ -133,9 +137,9 @@ async function handleCheckin(event) {
   });
 }
 
-// ── 啟動 ──────────────────────────────────────────────────────────────────────
+// ── 啟動（Render 需要綁定 0.0.0.0） ──────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`[OK] Server running on port ${PORT}`);
   console.log(`[OK] channelSecret 末4碼: ...${config.channelSecret.slice(-4)}`);
 });
