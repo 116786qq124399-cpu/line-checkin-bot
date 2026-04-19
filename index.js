@@ -1,21 +1,29 @@
-require("dotenv").config();
+require("dotenv").config(); // 本機開發用；Render 上請在 Dashboard → Environment 設定變數
+
 const express = require("express");
 const line = require("@line/bot-sdk");
 
-// ── 環境變數驗證 ─────────────────────────────────────────────────────────────
-if (!process.env.CHANNEL_ACCESS_TOKEN || !process.env.CHANNEL_SECRET) {
-  console.error("[ERROR] 缺少 CHANNEL_ACCESS_TOKEN 或 CHANNEL_SECRET，請檢查 .env");
+// ── 環境變數讀取（.trim() 防止複製貼上時帶入空白） ──────────────────────────
+const CHANNEL_ACCESS_TOKEN = (process.env.CHANNEL_ACCESS_TOKEN || "").trim();
+const CHANNEL_SECRET       = (process.env.CHANNEL_SECRET       || "").trim();
+
+// ── 啟動時印出環境變數狀態（不印明文） ───────────────────────────────────────
+console.log("[env] CHANNEL_ACCESS_TOKEN:", CHANNEL_ACCESS_TOKEN ? `已載入 (長度 ${CHANNEL_ACCESS_TOKEN.length})` : "❌ 未設定");
+console.log("[env] CHANNEL_SECRET      :", CHANNEL_SECRET       ? `已載入 (長度 ${CHANNEL_SECRET.length})`       : "❌ 未設定");
+
+if (!CHANNEL_ACCESS_TOKEN || !CHANNEL_SECRET) {
+  console.error("[ERROR] 缺少環境變數，請到 Render Dashboard → Environment 新增 CHANNEL_ACCESS_TOKEN 和 CHANNEL_SECRET");
   process.exit(1);
 }
 
 const config = {
-  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.CHANNEL_SECRET,
+  channelAccessToken: CHANNEL_ACCESS_TOKEN,
+  channelSecret:      CHANNEL_SECRET,
 };
 
 // ── LINE client 初始化 ────────────────────────────────────────────────────────
 const client = new line.messagingApi.MessagingApiClient({
-  channelAccessToken: config.channelAccessToken,
+  channelAccessToken: CHANNEL_ACCESS_TOKEN,
 });
 
 // ── Express app ───────────────────────────────────────────────────────────────
@@ -140,6 +148,5 @@ async function handleCheckin(event) {
 // ── 啟動（Render 需要綁定 0.0.0.0） ──────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[OK] Server running on port ${PORT}`);
-  console.log(`[OK] channelSecret 末4碼: ...${config.channelSecret.slice(-4)}`);
+  console.log(`[OK] Server listening on 0.0.0.0:${PORT}`);
 });
